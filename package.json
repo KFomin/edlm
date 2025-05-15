@@ -1,0 +1,19 @@
+{
+  "name": "everyday-life-management",
+  "version": "1.0.0",
+  "description": "",
+  "main": "vite.config.js",
+  "type": "module",
+  "scripts": {
+    "dev": "vite"
+  },
+  "private": true,
+  "devDependencies": {
+    "vite": "6.2.2",
+    "vite-plugin-elm-watch": "1.4.2"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.0.14",
+    "tailwindcss": "^4.0.14"
+  }
+}
