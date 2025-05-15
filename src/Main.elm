@@ -42,6 +42,7 @@ type Msg
     | FileSelected File
     | FileLoaded String
     | ReportFiltered String
+    | HeaderClicked Int
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -84,6 +85,25 @@ update msg ({ report } as model) =
                                                                 a
                                                            )
                                                 )
+                                    )
+                    }
+              }
+            , Cmd.none
+            )
+
+        HeaderClicked index ->
+            ( { model
+                | report =
+                    { report
+                        | filtered =
+                            report.filtered
+                                |> List.sortBy
+                                    (\row ->
+                                        row
+                                            |> List.take (index + 1)
+                                            |> List.reverse
+                                            |> List.head
+                                            |> Maybe.withDefault ""
                                     )
                     }
               }
@@ -165,10 +185,10 @@ view { report } =
             [ Attrs.class "table-auto border-collapse border border-gray-400 max-100 w-full" ]
             ([ Html.tr
                 []
-                (List.map
-                    (\header ->
+                (List.indexedMap
+                    (\index header ->
                         Html.th
-                            [ Attrs.class "border border-gray-300 p-2" ]
+                            [ Attrs.class "border border-gray-300 p-2", Events.onClick (HeaderClicked index) ]
                             [ Html.text header ]
                     )
                     report.headers
