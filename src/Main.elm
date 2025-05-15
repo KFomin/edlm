@@ -14,7 +14,12 @@ main =
     Browser.document
         { init =
             \_ ->
-                ( { report = { headers = [], rows = [] } }
+                ( { report =
+                        { headers = []
+                        , rows = []
+                        , filtered = []
+                        }
+                  }
                 , Cmd.none
                 )
         , view = view
@@ -24,17 +29,23 @@ main =
 
 
 type alias Model =
-    { report : { headers : List String, rows : List (List String) } }
+    { report :
+        { headers : List String
+        , rows : List (List String)
+        , filtered : List (List String)
+        }
+    }
 
 
 type Msg
     = FileRequested
     | FileSelected File
     | FileLoaded String
+    | ReportFiltered String
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
-update msg model =
+update msg ({ report } as model) =
     case msg of
         FileRequested ->
             ( model
@@ -47,16 +58,40 @@ update msg model =
             )
 
         FileLoaded content ->
-            let
-                _ =
-                    Debug.log "do decode: " (decodeBankReport content)
-            in
             ( { model | report = decodeBankReport content }
             , Cmd.none
             )
 
+        ReportFiltered search ->
+            ( { model
+                | report =
+                    { report
+                        | filtered =
+                            report.rows
+                                |> List.filter
+                                    (\row ->
+                                        row
+                                            |> List.any
+                                                (\cell ->
+                                                    String.contains
+                                                        (String.toLower search)
+                                                        (String.toLower cell)
+                                                        |> (\a ->
+                                                                let
+                                                                    _ =
+                                                                        Debug.log "a: " a
+                                                                in
+                                                                a
+                                                           )
+                                                )
+                                    )
+                    }
+              }
+            , Cmd.none
+            )
 
-decodeBankReport : String -> { headers : List String, rows : List (List String) }
+
+decodeBankReport : String -> { headers : List String, rows : List (List String), filtered : List (List String) }
 decodeBankReport string =
     let
         report =
@@ -67,6 +102,7 @@ decodeBankReport string =
     in
     { headers = report.headers
     , rows = report.rows
+    , filtered = report.rows
     }
 
 
@@ -109,15 +145,24 @@ view : Model -> Browser.Document Msg
 view { report } =
     { title = "everyday life management"
     , body =
-        [ Html.input
-            [ Attrs.type_ "button"
-            , Attrs.value "upload file"
-            , Attrs.class "p-2 m-2 border rounded"
-            , Events.onClick FileRequested
+        [ Html.div []
+            [ Html.input
+                [ Attrs.type_ "button"
+                , Attrs.value "upload file"
+                , Attrs.class "p-2 m-2 border rounded"
+                , Events.onClick FileRequested
+                ]
+                []
+            , Html.input
+                [ Attrs.type_ "text"
+                , Attrs.class "p-2 m-2 border rounded"
+                , Attrs.placeholder "search"
+                , Events.onInput ReportFiltered
+                ]
+                []
             ]
-            []
         , Html.table
-            [ Attrs.class "table-auto border-collapse border border-gray-400 max-100" ]
+            [ Attrs.class "table-auto border-collapse border border-gray-400 max-100 w-full" ]
             ([ Html.tr
                 []
                 (List.map
@@ -142,7 +187,7 @@ view { report } =
                                 row
                             )
                     )
-                    report.rows
+                    report.filtered
             )
         ]
     }
