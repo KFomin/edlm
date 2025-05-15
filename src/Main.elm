@@ -112,6 +112,7 @@ view { report } =
         [ Html.input
             [ Attrs.type_ "button"
             , Attrs.value "upload file"
+            , Attrs.class "p-2 m-2 border rounded"
             , Events.onClick FileRequested
             ]
             []
