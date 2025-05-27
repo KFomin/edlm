@@ -1,4 +1,4 @@
-port module Main exposing (..)
+module Main exposing (..)
 
 import Browser
 import Dict exposing (Dict)
@@ -23,31 +23,28 @@ main =
         }
 
 
-port toggleGroupDialog : String -> Cmd msg
-
-
 type alias Model =
-    { statement : Statement ReportRow
-    , undefinedColumns : List ( Int, ColumnType, List String )
-    , fileHasHeaders : Bool
-    , headers : Dict Int String
+    { statement : Statement StatementRow
+    , allStatementColumns : List ( Int, ColumnType, List String )
+    , statementHasHeaders : Bool
+    , statementHeaders : Dict Int String
     }
 
 
-type alias ReportRow =
-    { payer : String
-    , date : Time.Posix
-    , value : Float
-    , commonInfo : List ( String, String )
+type alias StatementRow =
+    { payerOrReceiver : String
+    , dateOfPayment : Time.Posix
+    , valueOfPayment : Float
+    , allOtherInfo : List ( String, String )
     }
 
 
 init : {} -> ( Model, Cmd msg )
 init _ =
     ( { statement = NotAsked
-      , fileHasHeaders = False
-      , undefinedColumns = []
-      , headers = Dict.empty
+      , statementHasHeaders = False
+      , allStatementColumns = []
+      , statementHeaders = Dict.empty
       }
     , Cmd.none
     )
@@ -57,7 +54,7 @@ type Statement entity
     = NotAsked
     | Loading
     | DefiningColumns
-    | Success (Dict Int entity)
+    | Ready (Dict Int entity)
 
 
 type ColumnType
@@ -132,7 +129,7 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         FileHasHeadersChecked fileHasHeader ->
-            ( { model | fileHasHeaders = fileHasHeader }
+            ( { model | statementHasHeaders = fileHasHeader }
             , Cmd.none
             )
 
@@ -149,187 +146,186 @@ update msg model =
         FileLoaded fileContent ->
             let
                 ( headers, columns ) =
-                    toColumns fileContent model.fileHasHeaders
+                    toColumns fileContent model.statementHasHeaders
             in
             ( { model
                 | statement = DefiningColumns
-                , undefinedColumns = columns
-                , headers = headers
+                , allStatementColumns = columns
+                , statementHeaders = headers
               }
             , Cmd.none
             )
 
         ColumnsSubmitted ->
-            let
-                dataStuff :
-                    { payers : Dict Int String
-                    , values : Dict Int Float
-                    , dates : Dict Int Time.Posix
-                    , commonInfos : Dict Int (List ( String, String ))
-                    }
-                dataStuff =
-                    List.foldr
-                        (\( _, columnType, cells ) acc ->
-                            cells
-                                |> List.indexedMap
-                                    (\index cell ->
-                                        ( index, cell )
-                                    )
-                                |> List.foldr
-                                    (\( index, cell ) stuffs ->
-                                        case columnType of
-                                            CommonInfo info ->
-                                                { stuffs
-                                                    | commonInfos =
-                                                        Dict.insert index
-                                                            (case Dict.get index stuffs.commonInfos of
-                                                                Just commonInfos ->
-                                                                    ( info, cell ) :: commonInfos
-
-                                                                Nothing ->
-                                                                    [ ( info, cell ) ]
-                                                            )
-                                                            stuffs.commonInfos
-                                                }
-
-                                            Payer ->
-                                                { stuffs
-                                                    | payers =
-                                                        if String.isEmpty cell then
-                                                            stuffs.payers
-
-                                                        else
-                                                            Dict.insert index
-                                                                cell
-                                                                stuffs.payers
-                                                }
-
-                                            Date ->
-                                                { stuffs
-                                                    | dates =
-                                                        (Iso8601.toTime
-                                                            (Decode.decodeString Decode.string cell
-                                                                |> Result.toMaybe
-                                                                |> Maybe.map
-                                                                    (\cleanCell ->
-                                                                        String.split "." cleanCell
-                                                                            |> List.reverse
-                                                                            |> String.join "-"
-                                                                    )
-                                                                |> Maybe.withDefault ""
-                                                            )
-                                                            |> Result.toMaybe
-                                                        )
-                                                            |> Maybe.map
-                                                                (\bitcherzz ->
-                                                                    Dict.insert index
-                                                                        bitcherzz
-                                                                        stuffs.dates
-                                                                )
-                                                            |> Maybe.withDefault stuffs.dates
-                                                }
-
-                                            Value ->
-                                                { stuffs
-                                                    | values =
-                                                        Decode.decodeString Decode.string cell
-                                                            |> Result.toMaybe
-                                                            |> Maybe.andThen
-                                                                (\cleanCell ->
-                                                                    let
-                                                                        _ =
-                                                                            Debug.log "cleanCell" cleanCell
-                                                                    in
-                                                                    String.replace "," "." cleanCell
-                                                                        |> String.toFloat
-                                                                        |> Maybe.map
-                                                                            (\flt ->
-                                                                                Dict.insert index
-                                                                                    flt
-                                                                                    stuffs.values
-                                                                            )
-                                                                )
-                                                            |> Maybe.withDefault stuffs.values
-                                                }
-                                    )
-                                    acc
-                        )
-                        { payers = Dict.empty
-                        , values = Dict.empty
-                        , dates = Dict.empty
-                        , commonInfos = Dict.empty
-                        }
-                        model.undefinedColumns
-
-                report : Dict Int ReportRow
-                report =
-                    dataStuff.payers
-                        |> Dict.foldr
-                            (\k payer acc ->
-                                let
-                                    date =
-                                        Dict.get k dataStuff.dates
-
-                                    value =
-                                        Dict.get k dataStuff.values
-
-                                    commonInfo =
-                                        Dict.get k dataStuff.commonInfos
-                                in
-                                Maybe.map2
-                                    (\d v ->
-                                        Dict.insert k
-                                            { payer = payer
-                                            , date = d
-                                            , value = v
-                                            , commonInfo = commonInfo |> Maybe.withDefault []
-                                            }
-                                            acc
-                                    )
-                                    date
-                                    value
-                                    |> Maybe.withDefault acc
-                            )
-                            Dict.empty
-
-                _ =
-                    Debug.log "AAAAA" report
-            in
-            ( model
-            , Cmd.none
-            )
-
-        ColumnTypeSelected index columnType ->
             ( { model
-                | undefinedColumns =
-                    List.map
-                        (\( i, ct, cells ) ->
-                            if i == index then
-                                ( i, columnTypeFromString columnType, cells )
-
-                            else
-                                ( i, ct, cells )
-                        )
-                        model.undefinedColumns
+                | statement =
+                    model.allStatementColumns
+                        |> toReportData
+                        |> toReport
+                        |> Ready
               }
             , Cmd.none
             )
 
-        CommonInfoHeaderChanged index commonInfo ->
+        ColumnTypeSelected selectedColumnIndex selectedColumnType ->
             ( { model
-                | undefinedColumns =
+                | allStatementColumns =
                     List.map
-                        (\( i, ct, cells ) ->
-                            if i == index then
-                                ( i, CommonInfo commonInfo, cells )
+                        (\( columnIndex, columnType, cells ) ->
+                            if columnIndex == selectedColumnIndex then
+                                ( columnIndex, columnTypeFromString selectedColumnType, cells )
 
                             else
-                                ( i, ct, cells )
+                                ( columnIndex, columnType, cells )
                         )
-                        model.undefinedColumns
+                        model.allStatementColumns
               }
             , Cmd.none
             )
+
+        CommonInfoHeaderChanged changedColumnIndex commonInfo ->
+            ( { model
+                | allStatementColumns =
+                    List.map
+                        (\( columnIndex, columnType, cells ) ->
+                            if columnIndex == changedColumnIndex then
+                                ( columnIndex, CommonInfo commonInfo, cells )
+
+                            else
+                                ( columnIndex, columnType, cells )
+                        )
+                        model.allStatementColumns
+              }
+            , Cmd.none
+            )
+
+
+toReport :
+    { payers : Dict Int String
+    , values : Dict Int Float
+    , dates : Dict Int Time.Posix
+    , commonInfo : Dict Int (List ( String, String ))
+    }
+    -> Dict Int StatementRow
+toReport { payers, dates, values, commonInfo } =
+    payers
+        |> Dict.foldr
+            (\k payer acc ->
+                Maybe.map2
+                    (\d v ->
+                        Dict.insert k
+                            { payerOrReceiver = payer
+                            , dateOfPayment = d
+                            , valueOfPayment = v
+                            , allOtherInfo =
+                                Dict.get k commonInfo
+                                    |> Maybe.withDefault []
+                            }
+                            acc
+                    )
+                    (Dict.get k dates)
+                    (Dict.get k values)
+                    |> Maybe.withDefault acc
+            )
+            Dict.empty
+
+
+toReportData :
+    List ( Int, ColumnType, List String )
+    ->
+        { payers : Dict Int String
+        , values : Dict Int Float
+        , dates : Dict Int Time.Posix
+        , commonInfo : Dict Int (List ( String, String ))
+        }
+toReportData =
+    List.foldr
+        (\( _, columnType, cells ) acc ->
+            cells
+                |> List.indexedMap
+                    (\index cell ->
+                        ( index, cell )
+                    )
+                |> List.foldr
+                    (\( index, cell ) stuffs ->
+                        case columnType of
+                            CommonInfo info ->
+                                { stuffs
+                                    | commonInfo =
+                                        Dict.insert index
+                                            (case Dict.get index stuffs.commonInfo of
+                                                Just commonInfos ->
+                                                    ( info, cell ) :: commonInfos
+
+                                                Nothing ->
+                                                    [ ( info, cell ) ]
+                                            )
+                                            stuffs.commonInfo
+                                }
+
+                            Payer ->
+                                { stuffs
+                                    | payers =
+                                        if String.isEmpty cell then
+                                            stuffs.payers
+
+                                        else
+                                            Dict.insert index
+                                                cell
+                                                stuffs.payers
+                                }
+
+                            Date ->
+                                { stuffs
+                                    | dates =
+                                        (Iso8601.toTime
+                                            (Decode.decodeString Decode.string cell
+                                                |> Result.toMaybe
+                                                |> Maybe.map
+                                                    (\cleanCell ->
+                                                        String.split "." cleanCell
+                                                            |> List.reverse
+                                                            |> String.join "-"
+                                                    )
+                                                |> Maybe.withDefault ""
+                                            )
+                                            |> Result.toMaybe
+                                        )
+                                            |> Maybe.map
+                                                (\bitcherzz ->
+                                                    Dict.insert index
+                                                        bitcherzz
+                                                        stuffs.dates
+                                                )
+                                            |> Maybe.withDefault stuffs.dates
+                                }
+
+                            Value ->
+                                { stuffs
+                                    | values =
+                                        Decode.decodeString Decode.string cell
+                                            |> Result.toMaybe
+                                            |> Maybe.andThen
+                                                (\cleanCell ->
+                                                    String.replace "," "." cleanCell
+                                                        |> String.toFloat
+                                                        |> Maybe.map
+                                                            (\flt ->
+                                                                Dict.insert index
+                                                                    flt
+                                                                    stuffs.values
+                                                            )
+                                                )
+                                            |> Maybe.withDefault stuffs.values
+                                }
+                    )
+                    acc
+        )
+        { payers = Dict.empty
+        , values = Dict.empty
+        , dates = Dict.empty
+        , commonInfo = Dict.empty
+        }
 
 
 toColumns : String -> Bool -> ( Dict Int String, List ( Int, ColumnType, List String ) )
@@ -441,12 +437,17 @@ view ({ statement } as model) =
 
             DefiningColumns ->
                 Html.div [ Attrs.class "w-3/4 flex gap-8 flex-wrap justify-center" ]
-                    ((model.undefinedColumns
+                    ((model.allStatementColumns
                         |> List.map
                             (\( index, columnType, v ) ->
                                 Html.div [ Attrs.class "flex flex-col w-64 gap-2 border rounded p-4" ]
                                     (Html.div [ Attrs.class "flex flex-row gap-4 justify-around" ]
-                                        [ viewColumnTypeSelect columnType index (Dict.get index model.headers |> Maybe.withDefault "") ]
+                                        [ viewColumnTypeSelect columnType
+                                            index
+                                            (Dict.get index model.statementHeaders
+                                                |> Maybe.withDefault ""
+                                            )
+                                        ]
                                         :: (List.take 3 v
                                                 |> List.map
                                                     (\cell ->
@@ -460,9 +461,28 @@ view ({ statement } as model) =
                         ++ [ Html.input [ Attrs.type_ "button", Attrs.value "submit", Events.onClick ColumnsSubmitted ] [] ]
                     )
 
-            Success a ->
-                Html.div []
-                    [ Html.text "Success" ]
+            Ready report ->
+                Html.div [ Attrs.class "flex flex-col w-full" ]
+                    (Dict.toList report
+                        |> List.sortBy (Tuple.second >> .dateOfPayment >> Time.posixToMillis)
+                        |> List.map
+                            (\( index, reportRow ) ->
+                                Html.div [ Attrs.class "flex flex-col justify-center items-center" ]
+                                    [ Html.div [ Attrs.class "flex flex-row gap-4 w-3/4 border-b" ]
+                                        [ Html.p [ Attrs.class "w-1/3 p-2" ] [ Html.text reportRow.payerOrReceiver ]
+                                        , Html.p [ Attrs.class "w-1/3 p-2 border-l" ]
+                                            [ Html.text
+                                                (Iso8601.fromTime reportRow.dateOfPayment
+                                                    |> String.split "T"
+                                                    |> List.head
+                                                    |> Maybe.withDefault ""
+                                                )
+                                            ]
+                                        , Html.p [ Attrs.class "w-1/3 p-2 border-l" ] [ Html.text (String.fromFloat reportRow.valueOfPayment) ]
+                                        ]
+                                    ]
+                            )
+                    )
         ]
     }
 
@@ -472,29 +492,49 @@ viewColumnTypeSelect columnType index header =
     Html.div []
         [ case columnType of
             CommonInfo info ->
-                Html.input [ Attrs.type_ "text", Attrs.value info, Events.onInput (CommonInfoHeaderChanged index) ]
-                    []
+                Html.span []
+                    [ Html.input
+                        [ Attrs.type_ "text"
+                        , Attrs.value info
+                        , Events.onInput (CommonInfoHeaderChanged index)
+                        ]
+                        []
+                    , viewTypeSelect index header
+                    ]
 
             Payer ->
-                Html.span [] []
+                Html.span []
+                    [ Html.label [] [ Html.text "payer" ]
+                    , viewTypeSelect index header
+                    ]
 
             Date ->
-                Html.span [] []
+                Html.span []
+                    [ Html.label [] [ Html.text "date" ]
+                    , viewTypeSelect index header
+                    ]
 
             Value ->
-                Html.span [] []
-        , Html.select [ Events.onInput (ColumnTypeSelected index) ]
-            [ Html.option
-                [ Attrs.value (columnTypeToString (CommonInfo header)) ]
-                [ Html.text (translateColumnType (CommonInfo header)) ]
-            , Html.option
-                [ Attrs.value (columnTypeToString Payer) ]
-                [ Html.text (translateColumnType Payer) ]
-            , Html.option
-                [ Attrs.value (columnTypeToString Date) ]
-                [ Html.text (translateColumnType Date) ]
-            , Html.option
-                [ Attrs.value (columnTypeToString Value) ]
-                [ Html.text (translateColumnType Value) ]
-            ]
+                Html.span []
+                    [ Html.label [] [ Html.text "value" ]
+                    , viewTypeSelect index header
+                    ]
+        ]
+
+
+viewTypeSelect : Int -> String -> Html.Html Msg
+viewTypeSelect index header =
+    Html.select [ Events.onInput (ColumnTypeSelected index) ]
+        [ Html.option
+            [ Attrs.value (columnTypeToString (CommonInfo header)) ]
+            [ Html.text (translateColumnType (CommonInfo header)) ]
+        , Html.option
+            [ Attrs.value (columnTypeToString Payer) ]
+            [ Html.text (translateColumnType Payer) ]
+        , Html.option
+            [ Attrs.value (columnTypeToString Date) ]
+            [ Html.text (translateColumnType Date) ]
+        , Html.option
+            [ Attrs.value (columnTypeToString Value) ]
+            [ Html.text (translateColumnType Value) ]
         ]

@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import {defineConfig} from 'vite';
 import elm from 'vite-plugin-elm-watch'
 import tailwindcss from "@tailwindcss/vite";
 
