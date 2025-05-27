@@ -4,7 +4,7 @@ import Browser
 import Dict exposing (Dict)
 import File exposing (File)
 import File.Select as Select
-import Html
+import Html exposing (Html)
 import Html.Attributes as Attrs
 import Html.Events as Events
 import Iso8601
@@ -28,7 +28,14 @@ type alias Model =
     , allStatementColumns : List ( Int, ColumnType, List String )
     , statementHasHeaders : Bool
     , statementHeaders : Dict Int String
+    , reportPage : ReportPage
     }
+
+
+type ReportPage
+    = RawReport
+    | GroupedByPayer
+    | GroupedByDate
 
 
 type alias StatementRow =
@@ -45,6 +52,7 @@ init _ =
       , statementHasHeaders = False
       , allStatementColumns = []
       , statementHeaders = Dict.empty
+      , reportPage = RawReport
       }
     , Cmd.none
     )
@@ -123,6 +131,7 @@ type Msg
     | ColumnsSubmitted
     | ColumnTypeSelected Int String
     | CommonInfoHeaderChanged Int String
+    | ReportPageButtonClicked ReportPage
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -196,6 +205,11 @@ update msg model =
                         )
                         model.allStatementColumns
               }
+            , Cmd.none
+            )
+
+        ReportPageButtonClicked reportPage ->
+            ( { model | reportPage = reportPage }
             , Cmd.none
             )
 
@@ -410,121 +424,199 @@ view ({ statement } as model) =
     , body =
         [ case statement of
             NotAsked ->
-                Html.div [ Attrs.class "flex justify-between" ]
-                    [ Html.div []
-                        [ Html.input
-                            [ Attrs.type_ "button"
-                            , Attrs.value "upload file"
-                            , Attrs.class "p-2 m-2 border rounded"
-                            , Events.onClick FileRequested
-                            ]
-                            []
-                        , Html.div
-                            []
-                            [ Html.label [] [ Html.text "Does file have headers?" ]
-                            , Html.input
-                                [ Attrs.type_ "checkbox"
-                                , Attrs.class "p-2 m-2 border rounded"
-                                , Events.onCheck FileHasHeadersChecked
-                                ]
-                                []
-                            ]
-                        ]
-                    ]
+                viewUploadStatement model.statementHasHeaders
 
             Loading ->
                 Html.div [] [ Html.text "loading" ]
 
             DefiningColumns ->
-                Html.div [ Attrs.class "w-3/4 flex gap-8 flex-wrap justify-center" ]
-                    ((model.allStatementColumns
-                        |> List.map
-                            (\( index, columnType, v ) ->
-                                Html.div [ Attrs.class "flex flex-col w-64 gap-2 border rounded p-4" ]
-                                    (Html.div [ Attrs.class "flex flex-row gap-4 justify-around" ]
-                                        [ viewColumnTypeSelect columnType
-                                            index
-                                            (Dict.get index model.statementHeaders
-                                                |> Maybe.withDefault ""
-                                            )
-                                        ]
-                                        :: (List.take 3 v
-                                                |> List.map
-                                                    (\cell ->
-                                                        Html.p [ Attrs.class "truncate" ]
-                                                            [ Html.text cell ]
-                                                    )
-                                           )
-                                    )
-                            )
-                     )
-                        ++ [ Html.input [ Attrs.type_ "button", Attrs.value "submit", Events.onClick ColumnsSubmitted ] [] ]
-                    )
+                viewDefineColumns model.allStatementColumns model.statementHeaders model.statementHasHeaders
 
             Ready report ->
-                Html.div [ Attrs.class "flex flex-col w-full" ]
-                    (Dict.toList report
-                        |> List.sortBy (Tuple.second >> .dateOfPayment >> Time.posixToMillis)
-                        |> List.map
-                            (\( index, reportRow ) ->
-                                Html.div [ Attrs.class "flex flex-col justify-center items-center" ]
-                                    [ Html.div [ Attrs.class "flex flex-row gap-4 w-3/4 border-b" ]
-                                        [ Html.p [ Attrs.class "w-1/3 p-2" ] [ Html.text reportRow.payerOrReceiver ]
-                                        , Html.p [ Attrs.class "w-1/3 p-2 border-l" ]
-                                            [ Html.text
-                                                (Iso8601.fromTime reportRow.dateOfPayment
-                                                    |> String.split "T"
-                                                    |> List.head
-                                                    |> Maybe.withDefault ""
-                                                )
-                                            ]
-                                        , Html.p [ Attrs.class "w-1/3 p-2 border-l" ] [ Html.text (String.fromFloat reportRow.valueOfPayment) ]
-                                        ]
-                                    ]
-                            )
-                    )
+                Html.div [ Attrs.class "flex flex-col justify-center items-center w-full" ]
+                    [ Html.div [ Attrs.class "flex flex-row gap-4" ]
+                        [ Html.input
+                            [ Attrs.type_ "button"
+                            , Attrs.value "raw report"
+                            , Events.onClick (ReportPageButtonClicked RawReport)
+                            , reportaPageButtonStyle (model.reportPage == RawReport)
+                            ]
+                            []
+                        , Html.input
+                            [ Attrs.type_ "button"
+                            , Attrs.value "Group By Payer"
+                            , Events.onClick (ReportPageButtonClicked GroupedByPayer)
+                            , reportaPageButtonStyle (model.reportPage == GroupedByPayer)
+                            ]
+                            []
+                        , Html.input
+                            [ Attrs.type_ "button"
+                            , Attrs.value "Group By Date"
+                            , Events.onClick (ReportPageButtonClicked GroupedByDate)
+                            , reportaPageButtonStyle (model.reportPage == GroupedByDate)
+                            ]
+                            []
+                        ]
+                    , case model.reportPage of
+                        RawReport ->
+                            viewRawReport report
+
+                        GroupedByPayer ->
+                            Html.span [] []
+
+                        GroupedByDate ->
+                            Html.span [] []
+                    ]
         ]
     }
 
 
-viewColumnTypeSelect : ColumnType -> Int -> String -> Html.Html Msg
-viewColumnTypeSelect columnType index header =
-    Html.div []
-        [ case columnType of
+reportaPageButtonStyle isActive =
+    Attrs.class
+        (([ "p-2 mb-2 border border-stone-500 rounded" ]
+            ++ (if isActive then
+                    [ "bg-green-400" ]
+
+                else
+                    []
+               )
+         )
+            |> String.join " "
+        )
+
+
+viewRawReport : Dict Int StatementRow -> Html msg
+viewRawReport report =
+    Html.div [ Attrs.class "flex flex-col w-full" ]
+        (Dict.toList report
+            |> List.sortBy (Tuple.second >> .dateOfPayment >> Time.posixToMillis)
+            |> List.map
+                (\( _, reportRow ) ->
+                    Html.div [ Attrs.class "flex flex-col justify-center items-center" ]
+                        [ Html.div [ Attrs.class "flex flex-row gap-4 w-3/4 border-b" ]
+                            [ Html.p [ Attrs.class "w-1/3 p-2" ] [ Html.text reportRow.payerOrReceiver ]
+                            , Html.p [ Attrs.class "w-1/3 p-2 border-l" ]
+                                [ Html.text
+                                    (Iso8601.fromTime reportRow.dateOfPayment
+                                        |> String.split "T"
+                                        |> List.head
+                                        |> Maybe.withDefault ""
+                                    )
+                                ]
+                            , Html.p [ Attrs.class "w-1/3 p-2 border-l" ] [ Html.text (String.fromFloat reportRow.valueOfPayment) ]
+                            ]
+                        ]
+                )
+        )
+
+
+viewUploadStatement : Bool -> Html Msg
+viewUploadStatement hasHeaders =
+    Html.div [ Attrs.class "flex justify-center items-center h-[100vh] w-full" ]
+        [ Html.div [ Attrs.class "flex flex-col justify-center border rounded p-8" ]
+            [ Html.input
+                [ Attrs.type_ "button"
+                , Attrs.value "upload file"
+                , Attrs.class "p-2 m-2 border rounded"
+                , Events.onClick FileRequested
+                ]
+                []
+            , Html.div
+                [ Attrs.class "flex flex-row items-center border rounded bg-stone-100 p-1 hover:bg-cyan-100"
+                , Events.onClick (FileHasHeadersChecked (not hasHeaders))
+                ]
+                [ Html.input
+                    [ Attrs.type_ "checkbox"
+                    , Attrs.class "p-2 m-2 border rounded"
+                    , Attrs.checked hasHeaders
+                    , Events.onCheck FileHasHeadersChecked
+                    ]
+                    []
+                , Html.label [] [ Html.text "report contains headers" ]
+                ]
+            ]
+        ]
+
+
+viewDefineColumns : List ( Int, ColumnType, List String ) -> Dict Int String -> Bool -> Html Msg
+viewDefineColumns allStatementColumns statementHeaders hasHeaders =
+    Html.div [ Attrs.class "flex flex-col gap-2 justify-center items-center w-full" ]
+        [ Html.div [ Attrs.class "flex justify-center items-center w-full sticky top-0 py-2 mb-2 bg-stone-500" ]
+            [ Html.input
+                [ Attrs.type_ "button"
+                , Attrs.value "submit"
+                , Attrs.class "p-4 bg-green-400 text-white border-2 border-stone-500 rounded"
+                , Events.onClick ColumnsSubmitted
+                ]
+                []
+            ]
+        , Html.div [ Attrs.class "w-3/4 flex gap-8 flex-wrap justify-center" ]
+            (allStatementColumns
+                |> List.map
+                    (\( index, columnType, v ) ->
+                        Html.div [ Attrs.class "flex flex-col w-96 gap-2 border rounded p-4" ]
+                            (Html.div [ Attrs.class "flex flex-row gap-4 justify-around" ]
+                                [ viewColumnTypeSelect hasHeaders
+                                    columnType
+                                    index
+                                    (Dict.get index statementHeaders
+                                        |> Maybe.withDefault ""
+                                    )
+                                ]
+                                :: (List.take 4 v
+                                        |> List.map
+                                            (\cell ->
+                                                Html.p [ Attrs.class "truncate" ]
+                                                    [ Html.text cell ]
+                                            )
+                                   )
+                            )
+                    )
+            )
+        ]
+
+
+viewColumnTypeSelect : Bool -> ColumnType -> Int -> String -> Html Msg
+viewColumnTypeSelect hasHeaders columnType index header =
+    Html.div [ Attrs.class "flex flex-row w-full justify-between items-center border-b my-1 pb-2" ]
+        (case columnType of
             CommonInfo info ->
-                Html.span []
-                    [ Html.input
+                [ if hasHeaders then
+                    Html.label [ Attrs.class "w-2/3" ] [ Html.text header ]
+
+                  else
+                    Html.input
                         [ Attrs.type_ "text"
                         , Attrs.value info
                         , Events.onInput (CommonInfoHeaderChanged index)
                         ]
                         []
-                    , viewTypeSelect index header
-                    ]
+                , viewTypeSelect index header
+                ]
 
             Payer ->
-                Html.span []
-                    [ Html.label [] [ Html.text "payer" ]
-                    , viewTypeSelect index header
-                    ]
+                [ Html.label [ Attrs.class "w-2/3" ] [ Html.text header ]
+                , viewTypeSelect index header
+                ]
 
             Date ->
-                Html.span []
-                    [ Html.label [] [ Html.text "date" ]
-                    , viewTypeSelect index header
-                    ]
+                [ Html.label [ Attrs.class "w-2/3" ] [ Html.text header ]
+                , viewTypeSelect index header
+                ]
 
             Value ->
-                Html.span []
-                    [ Html.label [] [ Html.text "value" ]
-                    , viewTypeSelect index header
-                    ]
-        ]
+                [ Html.label [ Attrs.class "w-2/3" ] [ Html.text header ]
+                , viewTypeSelect index header
+                ]
+        )
 
 
-viewTypeSelect : Int -> String -> Html.Html Msg
+viewTypeSelect : Int -> String -> Html Msg
 viewTypeSelect index header =
-    Html.select [ Events.onInput (ColumnTypeSelected index) ]
+    Html.select
+        [ Events.onInput (ColumnTypeSelected index)
+        , Attrs.class "w-1/3 bg-stone-100 p-2 border rounded"
+        ]
         [ Html.option
             [ Attrs.value (columnTypeToString (CommonInfo header)) ]
             [ Html.text (translateColumnType (CommonInfo header)) ]
