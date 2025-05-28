@@ -29,13 +29,13 @@ type alias Model =
     , statementHasHeaders : Bool
     , statementHeaders : Dict Int String
     , reportPage : ReportPage
+    , expanded : Maybe String
     }
 
 
 type ReportPage
     = RawReport
     | GroupedByPayer
-    | GroupedByDate
 
 
 type alias StatementRow =
@@ -53,6 +53,7 @@ init _ =
       , allStatementColumns = []
       , statementHeaders = Dict.empty
       , reportPage = RawReport
+      , expanded = Nothing
       }
     , Cmd.none
     )
@@ -132,6 +133,7 @@ type Msg
     | ColumnTypeSelected Int String
     | CommonInfoHeaderChanged Int String
     | ReportPageButtonClicked ReportPage
+    | GroupExpanded String
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -210,6 +212,18 @@ update msg model =
 
         ReportPageButtonClicked reportPage ->
             ( { model | reportPage = reportPage }
+            , Cmd.none
+            )
+
+        GroupExpanded string ->
+            ( { model
+                | expanded =
+                    if Just string == model.expanded then
+                        Nothing
+
+                    else
+                        Just string
+              }
             , Cmd.none
             )
 
@@ -293,15 +307,9 @@ toReportData =
                                 { stuffs
                                     | dates =
                                         (Iso8601.toTime
-                                            (Decode.decodeString Decode.string cell
-                                                |> Result.toMaybe
-                                                |> Maybe.map
-                                                    (\cleanCell ->
-                                                        String.split "." cleanCell
-                                                            |> List.reverse
-                                                            |> String.join "-"
-                                                    )
-                                                |> Maybe.withDefault ""
+                                            (String.split "." cell
+                                                |> List.reverse
+                                                |> String.join "-"
                                             )
                                             |> Result.toMaybe
                                         )
@@ -317,18 +325,13 @@ toReportData =
                             Value ->
                                 { stuffs
                                     | values =
-                                        Decode.decodeString Decode.string cell
-                                            |> Result.toMaybe
-                                            |> Maybe.andThen
-                                                (\cleanCell ->
-                                                    String.replace "," "." cleanCell
-                                                        |> String.toFloat
-                                                        |> Maybe.map
-                                                            (\flt ->
-                                                                Dict.insert index
-                                                                    flt
-                                                                    stuffs.values
-                                                            )
+                                        String.replace "," "." cell
+                                            |> String.toFloat
+                                            |> Maybe.map
+                                                (\flt ->
+                                                    Dict.insert index
+                                                        flt
+                                                        stuffs.values
                                                 )
                                             |> Maybe.withDefault stuffs.values
                                 }
@@ -345,6 +348,19 @@ toReportData =
 toColumns : String -> Bool -> ( Dict Int String, List ( Int, ColumnType, List String ) )
 toColumns stringReport fileHasHeaders =
     let
+        normalizeStringCell : String -> String
+        normalizeStringCell cell =
+            case Decode.decodeString Decode.string cell of
+                Ok normalizedCell ->
+                    if String.isEmpty normalizedCell then
+                        cell
+
+                    else
+                        normalizedCell
+
+                Err _ ->
+                    cell
+
         maybeHeaders : Maybe (Dict Int String)
         maybeHeaders =
             if fileHasHeaders then
@@ -355,7 +371,7 @@ toColumns stringReport fileHasHeaders =
                     |> Maybe.map
                         (\headersRow ->
                             String.split ";" headersRow
-                                |> List.indexedMap (\index header -> ( index, header ))
+                                |> List.indexedMap (\index header -> ( index, normalizeStringCell header ))
                                 |> Dict.fromList
                         )
 
@@ -382,7 +398,7 @@ toColumns stringReport fileHasHeaders =
                 |> List.map
                     (List.indexedMap
                         (\index cell ->
-                            ( index, cell )
+                            ( index, normalizeStringCell cell )
                         )
                     )
                 |> List.foldr
@@ -449,28 +465,80 @@ view ({ statement } as model) =
                             , reportaPageButtonStyle (model.reportPage == GroupedByPayer)
                             ]
                             []
-                        , Html.input
-                            [ Attrs.type_ "button"
-                            , Attrs.value "Group By Date"
-                            , Events.onClick (ReportPageButtonClicked GroupedByDate)
-                            , reportaPageButtonStyle (model.reportPage == GroupedByDate)
-                            ]
-                            []
                         ]
                     , case model.reportPage of
                         RawReport ->
                             viewRawReport report
 
                         GroupedByPayer ->
-                            Html.span [] []
-
-                        GroupedByDate ->
-                            Html.span [] []
+                            viewGroupedByPayer { rows = Dict.values report, expanded = model.expanded }
                     ]
         ]
     }
 
 
+viewGroupedByPayer : { rows : List StatementRow, expanded : Maybe String } -> Html Msg
+viewGroupedByPayer { rows, expanded } =
+    let
+        groupsByPayer : List ( { payer : String, totalSum : Float }, List StatementRow )
+        groupsByPayer =
+            rows
+                |> List.map (\row -> ( row.payerOrReceiver, row ))
+                |> List.foldl
+                    (\( payer, row ) acc ->
+                        if payer == "\"\"" then
+                            acc
+
+                        else
+                            case Dict.get payer acc of
+                                Just group ->
+                                    Dict.insert payer (row :: group) acc
+
+                                Nothing ->
+                                    Dict.insert payer [ row ] acc
+                    )
+                    Dict.empty
+                |> Dict.toList
+                |> List.map
+                    (\( payer, groupRows ) ->
+                        ( { payer = payer
+                          , totalSum =
+                                groupRows
+                                    |> List.map .valueOfPayment
+                                    |> List.sum
+                          }
+                        , groupRows
+                        )
+                    )
+                |> List.sortBy (Tuple.first >> .totalSum)
+    in
+    Html.div [ Attrs.class "flex flex-col justify-between w-3/4" ]
+        (groupsByPayer
+            |> List.map
+                (\( { payer, totalSum }, groupRows ) ->
+                    Html.div
+                        [ Attrs.class "flex flex-col w-full"
+                        ]
+                        ([ Html.div
+                            [ Attrs.class "flex flex-row justify-between border-b rounded-t p-2 my-1 bg-stone-200"
+                            , Events.onClick (GroupExpanded payer)
+                            ]
+                            [ Html.p [] [ Html.text payer ]
+                            , Html.p [] [ Html.text (String.fromFloat totalSum) ]
+                            ]
+                         ]
+                            ++ (if Just payer == expanded then
+                                    groupRows |> List.map viewRawReportRow
+
+                                else
+                                    []
+                               )
+                        )
+                )
+        )
+
+
+reportaPageButtonStyle : Bool -> Html.Attribute msg
 reportaPageButtonStyle isActive =
     Attrs.class
         (([ "p-2 mb-2 border border-stone-500 rounded" ]
@@ -490,24 +558,26 @@ viewRawReport report =
     Html.div [ Attrs.class "flex flex-col w-full" ]
         (Dict.toList report
             |> List.sortBy (Tuple.second >> .dateOfPayment >> Time.posixToMillis)
-            |> List.map
-                (\( _, reportRow ) ->
-                    Html.div [ Attrs.class "flex flex-col justify-center items-center" ]
-                        [ Html.div [ Attrs.class "flex flex-row gap-4 w-3/4 border-b" ]
-                            [ Html.p [ Attrs.class "w-1/3 p-2" ] [ Html.text reportRow.payerOrReceiver ]
-                            , Html.p [ Attrs.class "w-1/3 p-2 border-l" ]
-                                [ Html.text
-                                    (Iso8601.fromTime reportRow.dateOfPayment
-                                        |> String.split "T"
-                                        |> List.head
-                                        |> Maybe.withDefault ""
-                                    )
-                                ]
-                            , Html.p [ Attrs.class "w-1/3 p-2 border-l" ] [ Html.text (String.fromFloat reportRow.valueOfPayment) ]
-                            ]
-                        ]
-                )
+            |> List.map (Tuple.second >> viewRawReportRow)
         )
+
+
+viewRawReportRow : StatementRow -> Html msg
+viewRawReportRow reportRow =
+    Html.div [ Attrs.class "flex flex-col justify-center items-center" ]
+        [ Html.div [ Attrs.class "flex flex-row gap-4 w-full border-b" ]
+            [ Html.p [ Attrs.class "w-1/3 p-2" ] [ Html.text reportRow.payerOrReceiver ]
+            , Html.p [ Attrs.class "w-1/3 p-2 border-l" ]
+                [ Html.text
+                    (Iso8601.fromTime reportRow.dateOfPayment
+                        |> String.split "T"
+                        |> List.head
+                        |> Maybe.withDefault ""
+                    )
+                ]
+            , Html.p [ Attrs.class "w-1/3 p-2 border-l" ] [ Html.text (String.fromFloat reportRow.valueOfPayment) ]
+            ]
+        ]
 
 
 viewUploadStatement : Bool -> Html Msg
