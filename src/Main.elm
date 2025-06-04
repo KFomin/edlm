@@ -583,7 +583,7 @@ viewGroupedByPayer :
                 ChartItem.Dot
             )
     -> Html Msg
-viewGroupedByPayer { rows, expanded } hovering =
+viewGroupedByPayer { rows, expanded } _ =
     let
         groupsByPayer : List ( { payer : String, totalSum : Float }, List StatementRow )
         groupsByPayer =
@@ -617,46 +617,16 @@ viewGroupedByPayer { rows, expanded } hovering =
                     )
                 |> List.sortBy (Tuple.first >> .totalSum)
     in
-    Html.div [ Attrs.class "flex flex-col justify-between w-3/4" ]
+    Html.div [ Attrs.class "flex flex-col justify-between lg:w-3/4 md:w-full md:px-1" ]
         (groupsByPayer
             |> List.map
                 (\( { payer, totalSum }, groupRows ) ->
-                    let
-                        chartData : List { value : Float, index : Float, date : String }
-                        chartData =
-                            groupRows
-                                |> List.sortBy (.dateOfPayment >> Time.posixToMillis)
-                                |> List.indexedMap
-                                    (\index { valueOfPayment, dateOfPayment } ->
-                                        { value = valueOfPayment
-                                        , index = Basics.toFloat index
-                                        , date = Iso8601.fromTime dateOfPayment
-                                        }
-                                    )
-                                |> List.foldl
-                                    (\{ value, index, date } acc ->
-                                        case Dict.get date acc of
-                                            Nothing ->
-                                                Dict.insert date { value = value, index = index } acc
-
-                                            Just dictValue ->
-                                                Dict.insert date { value = value + dictValue.value, index = dictValue.index } acc
-                                    )
-                                    Dict.empty
-                                |> Dict.toList
-                                |> List.map
-                                    (\( date, { value, index } ) ->
-                                        { value = value
-                                        , index = index
-                                        , date = date
-                                        }
-                                    )
-                    in
                     Html.div
-                        [ Attrs.class "flex flex-col w-full"
+                        [ Attrs.class "flex flex-col justify-center w-full"
                         ]
                         ([ Html.div
-                            [ Attrs.class "flex flex-row justify-between border-b rounded-t p-2 my-1 bg-stone-200"
+                            [ Attrs.class "flex flex-row justify-between p-2 my-1"
+                            , Attrs.class "border-b rounded-t bg-stone-200"
                             , Events.onClick (GroupExpanded payer)
                             ]
                             [ Html.p [] [ Html.text payer ]
@@ -666,39 +636,46 @@ viewGroupedByPayer { rows, expanded } hovering =
                             ]
                          ]
                             ++ (if Just payer == expanded then
-                                    [ [ Chart.chart
-                                            [ ChartAttrs.height 100
-                                            , ChartAttrs.htmlAttrs [ Attrs.class "w-full px-4 pb-4 pt-24 border rounded" ]
-                                            ]
-                                            [ --, Chart.series .index
-                                              --    [ Chart.interpolated .value
-                                              --        []
-                                              --        [ ChartAttrs.circle, ChartAttrs.border "1px solid black" ]
-                                              --    ]
-                                              --    (chartData
-                                              --        |> List.map
-                                              --            (\{ value, index, date } ->
-                                              --                { index = index
-                                              --                , value = value
-                                              --                , date = date
-                                              --                }
-                                              --            )
-                                              --    )
-                                              Chart.bars
-                                                []
-                                                [ Chart.bar .value [ ChartAttrs.color "lightblue" ] ]
-                                                chartData
-                                            , Chart.barLabels
-                                                [ ChartAttrs.fontSize 4
-                                                , ChartAttrs.rotate 45
-                                                , ChartAttrs.color "stone"
-                                                , ChartAttrs.alignLeft
-                                                ]
-                                            ]
-                                      ]
-                                    , groupRows |> List.map viewRawReportRow
-                                    ]
-                                        |> List.concat
+                                    toChartData groupRows
+                                        |> Dict.toList
+                                        |> List.map
+                                            (\( year, monthlyReport ) ->
+                                                Html.div [ Attrs.class "pb-4" ]
+                                                    [ Html.p [ Attrs.class "py-4" ]
+                                                        [ Html.text (String.fromInt year ++ " year") ]
+                                                    , Chart.chart
+                                                        [ ChartAttrs.height 80
+                                                        , ChartAttrs.htmlAttrs
+                                                            [ Attrs.class "w-full px-4 pb-12 pt-24 border rounded" ]
+                                                        ]
+                                                        [ Chart.binLabels
+                                                            (\( month, _ ) -> String.fromInt month)
+                                                            [ ChartAttrs.moveDown 6, ChartAttrs.fontSize 5 ]
+                                                        , Chart.yLabels
+                                                            [ ChartAttrs.withGrid
+                                                            , ChartAttrs.fontSize 0
+                                                            ]
+                                                        , Chart.bars
+                                                            []
+                                                            [ Chart.bar
+                                                                (\( month, value ) ->
+                                                                    ((value * 100)
+                                                                        |> Basics.round
+                                                                        |> Basics.toFloat
+                                                                    )
+                                                                        / 100
+                                                                )
+                                                                [ ChartAttrs.color "lightblue" ]
+                                                            ]
+                                                            (monthlyReport |> Dict.toList)
+                                                        , Chart.barLabels
+                                                            [ ChartAttrs.fontSize 5
+                                                            , ChartAttrs.moveUp 2
+                                                            , ChartAttrs.color "stone"
+                                                            ]
+                                                        ]
+                                                    ]
+                                            )
 
                                 else
                                     []
@@ -706,6 +683,108 @@ viewGroupedByPayer { rows, expanded } hovering =
                         )
                 )
         )
+
+
+toChartData : List StatementRow -> Dict Int (Dict Int Float)
+toChartData rows =
+    rows
+        |> List.map
+            (\row ->
+                let
+                    year : Int
+                    year =
+                        Time.toYear Time.utc row.dateOfPayment
+                in
+                ( year, row )
+            )
+        |> List.foldl
+            (\( year, row ) acc ->
+                case Dict.get year acc of
+                    Just value ->
+                        Dict.insert year (row :: value) acc
+
+                    Nothing ->
+                        Dict.insert year [ row ] acc
+            )
+            Dict.empty
+        |> Dict.map
+            (\_ rows_ ->
+                rows_
+                    |> List.map
+                        (\row ->
+                            ( monthToInt (Time.toMonth Time.utc row.dateOfPayment)
+                            , row.valueOfPayment
+                            )
+                        )
+                    |> List.append allMonthsNumbersWithZeroValues
+                    |> List.foldl
+                        (\( month, valueOfPayment ) acc ->
+                            case Dict.get month acc of
+                                Just monthTotal ->
+                                    Dict.insert month (valueOfPayment + monthTotal) acc
+
+                                Nothing ->
+                                    Dict.insert month valueOfPayment acc
+                        )
+                        Dict.empty
+            )
+
+
+allMonthsNumbersWithZeroValues : List ( Int, Float )
+allMonthsNumbersWithZeroValues =
+    [ ( 1, 0 )
+    , ( 2, 0 )
+    , ( 3, 0 )
+    , ( 4, 0 )
+    , ( 5, 0 )
+    , ( 6, 0 )
+    , ( 7, 0 )
+    , ( 8, 0 )
+    , ( 9, 0 )
+    , ( 10, 0 )
+    , ( 11, 0 )
+    , ( 12, 0 )
+    ]
+
+
+monthToInt : Time.Month -> Int
+monthToInt month =
+    case month of
+        Time.Jan ->
+            1
+
+        Time.Feb ->
+            2
+
+        Time.Mar ->
+            3
+
+        Time.Apr ->
+            4
+
+        Time.May ->
+            5
+
+        Time.Jun ->
+            6
+
+        Time.Jul ->
+            7
+
+        Time.Aug ->
+            8
+
+        Time.Sep ->
+            9
+
+        Time.Oct ->
+            10
+
+        Time.Nov ->
+            11
+
+        Time.Dec ->
+            12
 
 
 reportaPageButtonStyle : Bool -> Html.Attribute msg
