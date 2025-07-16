@@ -1,9 +1,8 @@
-port module Main exposing (..)
+module Main exposing (..)
 
 import Browser
 import Chart
 import Chart.Attributes as ChartAttrs
-import Chart.Events as ChartEvents
 import Chart.Item as ChartItem
 import Dict exposing (Dict)
 import File exposing (File)
@@ -15,9 +14,6 @@ import Iso8601
 import Json.Decode as Decode
 import Task
 import Time
-
-
-port toggleGroupDialog : String -> Cmd msg
 
 
 main : Program {} Model Msg
@@ -35,29 +31,25 @@ type alias Model =
     , allStatementColumns : List ( Int, ColumnType, List String )
     , statementHasHeaders : Bool
     , statementHeaders : Dict Int String
-    , reportPage : ReportPage
     , expanded : Maybe String
-    , groupDialogData : Maybe GroupDialogData
-    , hovering : List (ChartItem.One { value : Float, index : Float, date : Time.Posix } ChartItem.Dot)
+    , hovering : List StatementChartItem
     }
 
 
-type alias GroupDialogData =
-    { payer : String
-    , rows : List StatementRow
-    }
-
-
-type ReportPage
-    = RawReport
-    | GroupedByPayer
+type alias StatementChartItem =
+    ChartItem.One
+        { value : Float
+        , index : Float
+        , date : Time.Posix
+        }
+        ChartItem.Dot
 
 
 type alias StatementRow =
     { payerOrReceiver : String
     , dateOfPayment : Time.Posix
     , valueOfPayment : Float
-    , allOtherInfo : List ( String, String )
+    , allOtherInfo : List String
     }
 
 
@@ -67,9 +59,7 @@ init _ =
       , statementHasHeaders = False
       , allStatementColumns = []
       , statementHeaders = Dict.empty
-      , reportPage = RawReport
       , expanded = Nothing
-      , groupDialogData = Nothing
       , hovering = []
       }
     , Cmd.none
@@ -84,7 +74,7 @@ type Statement entity
 
 
 type ColumnType
-    = CommonInfo String
+    = CommonInfo
     | Payer
     | Date
     | Value
@@ -93,52 +83,52 @@ type ColumnType
 translateColumnType : ColumnType -> String
 translateColumnType columnType =
     case columnType of
-        CommonInfo _ ->
-            "info"
+        CommonInfo ->
+            "common info"
 
         Payer ->
-            "payer"
+            "payment receiver"
 
         Date ->
-            "date"
+            "date of payment"
 
         Value ->
-            "value"
+            "money paid"
 
 
 columnTypeToString : ColumnType -> String
 columnTypeToString columnType =
     case columnType of
-        CommonInfo _ ->
+        CommonInfo ->
             "commoninfo"
 
         Payer ->
-            "payer"
+            "payment receiver"
 
         Date ->
-            "date"
+            "date of payment"
 
         Value ->
-            "value"
+            "money paid"
 
 
 columnTypeFromString : String -> ColumnType
 columnTypeFromString columnType =
     case columnType of
         "commoninfo" ->
-            CommonInfo ""
+            CommonInfo
 
-        "payer" ->
+        "payment receiver" ->
             Payer
 
-        "date" ->
+        "date of payment" ->
             Date
 
-        "value" ->
+        "money paid" ->
             Value
 
         _ ->
-            CommonInfo columnType
+            CommonInfo
 
 
 type Msg
@@ -148,12 +138,8 @@ type Msg
     | FileLoaded String
     | ColumnsSubmitted
     | ColumnTypeSelected Int String
-    | CommonInfoHeaderChanged Int String
-    | ReportPageButtonClicked ReportPage
     | GroupExpanded String
-    | GroupChartClicked String (List StatementRow)
-    | GroupDialogToggled
-    | OnChartPointHover (List (ChartItem.One { value : Float, index : Float, date : Time.Posix } ChartItem.Dot))
+    | OnChartPointHover (List StatementChartItem)
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -214,27 +200,6 @@ update msg model =
             , Cmd.none
             )
 
-        CommonInfoHeaderChanged changedColumnIndex commonInfo ->
-            ( { model
-                | allStatementColumns =
-                    List.map
-                        (\( columnIndex, columnType, cells ) ->
-                            if columnIndex == changedColumnIndex then
-                                ( columnIndex, CommonInfo commonInfo, cells )
-
-                            else
-                                ( columnIndex, columnType, cells )
-                        )
-                        model.allStatementColumns
-              }
-            , Cmd.none
-            )
-
-        ReportPageButtonClicked reportPage ->
-            ( { model | reportPage = reportPage }
-            , Cmd.none
-            )
-
         GroupExpanded string ->
             ( { model
                 | expanded =
@@ -247,22 +212,6 @@ update msg model =
             , Cmd.none
             )
 
-        GroupChartClicked payer statementRows ->
-            ( { model
-                | groupDialogData =
-                    Just
-                        { payer = payer
-                        , rows = statementRows
-                        }
-              }
-            , toggleGroupDialog "report-group-dialog"
-            )
-
-        GroupDialogToggled ->
-            ( model
-            , toggleGroupDialog "report-group-dialog"
-            )
-
         OnChartPointHover chartItems ->
             ( { model | hovering = chartItems }
             , Cmd.none
@@ -273,7 +222,7 @@ toReport :
     { payers : Dict Int String
     , values : Dict Int Float
     , dates : Dict Int Time.Posix
-    , commonInfo : Dict Int (List ( String, String ))
+    , commonInfo : Dict Int (List String)
     }
     -> Dict Int StatementRow
 toReport { payers, dates, values, commonInfo } =
@@ -305,7 +254,7 @@ toReportData :
         { payers : Dict Int String
         , values : Dict Int Float
         , dates : Dict Int Time.Posix
-        , commonInfo : Dict Int (List ( String, String ))
+        , commonInfo : Dict Int (List String)
         }
 toReportData =
     List.foldr
@@ -318,16 +267,16 @@ toReportData =
                 |> List.foldr
                     (\( index, cell ) stuffs ->
                         case columnType of
-                            CommonInfo info ->
+                            CommonInfo ->
                                 { stuffs
                                     | commonInfo =
                                         Dict.insert index
                                             (case Dict.get index stuffs.commonInfo of
                                                 Just commonInfos ->
-                                                    ( info, cell ) :: commonInfos
+                                                    cell :: commonInfos
 
                                                 Nothing ->
-                                                    [ ( info, cell ) ]
+                                                    [ cell ]
                                             )
                                             stuffs.commonInfo
                                 }
@@ -460,16 +409,7 @@ toColumns stringReport fileHasHeaders =
                     )
                     Dict.empty
                 |> Dict.toList
-                |> List.map
-                    (\( index, v ) ->
-                        maybeHeaders
-                            |> Maybe.andThen
-                                (\headers ->
-                                    Dict.get index headers
-                                        |> Maybe.map (\header -> ( index, CommonInfo header, v ))
-                                )
-                            |> Maybe.withDefault ( index, CommonInfo (String.fromInt index), v )
-                    )
+                |> List.map (\( index, v ) -> ( index, CommonInfo, v ))
                 |> List.filter (\( _, _, cells ) -> List.all (String.isEmpty >> not) cells)
     in
     ( maybeHeaders |> Maybe.withDefault Dict.empty, columns_ )
@@ -493,95 +433,19 @@ view ({ statement } as model) =
 
             Ready report ->
                 Html.div [ Attrs.class "flex flex-col justify-center items-center w-full" ]
-                    [ Html.div [ Attrs.class "flex flex-row gap-4" ]
-                        [ Html.input
-                            [ Attrs.type_ "button"
-                            , Attrs.value "raw report"
-                            , Events.onClick (ReportPageButtonClicked RawReport)
-                            , reportaPageButtonStyle (model.reportPage == RawReport)
-                            ]
-                            []
-                        , Html.input
-                            [ Attrs.type_ "button"
-                            , Attrs.value "Group By Payer"
-                            , Events.onClick (ReportPageButtonClicked GroupedByPayer)
-                            , reportaPageButtonStyle (model.reportPage == GroupedByPayer)
-                            ]
-                            []
-                        ]
-                    , case model.reportPage of
-                        RawReport ->
-                            viewRawReport report
-
-                        GroupedByPayer ->
-                            viewGroupedByPayer
-                                { rows = Dict.values report
-                                , expanded = model.expanded
-                                }
-                                model.hovering
+                    [ viewGroupedByPayer
+                        { rows = Dict.values report
+                        , expanded = model.expanded
+                        }
+                        model.hovering
                     ]
-        , viewGroupDialog model.groupDialogData
         ]
     }
 
 
-viewGroupDialog : Maybe GroupDialogData -> Html Msg
-viewGroupDialog maybeDialogData =
-    Html.node "dialog"
-        [ Attrs.id "report-group-dialog"
-        , Attrs.class "backdrop:bg-black/50 backdrop:backdrop-blur-md backdrop:fixed max-h-screen"
-        , Attrs.class "fixed left-[50%] top-[50%] translate-x-[-50%] translate-y-[-50%]"
-        , Attrs.class "min-w-[500px] w-full h-full"
-        ]
-        (case maybeDialogData of
-            Just dialogData ->
-                let
-                    chartData : List { valueOfPayment : Float, dateOfPayment : Float }
-                    chartData =
-                        dialogData.rows
-                            |> List.sortBy (.dateOfPayment >> Time.posixToMillis)
-                            |> List.map (\{ valueOfPayment, dateOfPayment } -> { valueOfPayment = valueOfPayment, dateOfPayment = Time.posixToMillis dateOfPayment |> Basics.toFloat })
-                in
-                [ Html.div
-                    [ Attrs.class "flex flex-col items-end gap-2 p-2"
-                    ]
-                    [ Html.input
-                        [ Attrs.type_ "button"
-                        , Attrs.value "close"
-                        , reportaPageButtonStyle True
-                        , Events.onClick GroupDialogToggled
-                        ]
-                        []
-                    , Chart.chart []
-                        [ Chart.xLabels []
-                        , Chart.yLabels [ ChartAttrs.withGrid ]
-                        , Chart.series .valueOfPayment
-                            [ Chart.interpolated
-                                .dateOfPayment
-                                []
-                                []
-                            ]
-                            chartData
-                        ]
-                    ]
-                ]
-
-            Nothing ->
-                []
-        )
-
-
 viewGroupedByPayer :
     { rows : List StatementRow, expanded : Maybe String }
-    ->
-        List
-            (ChartItem.One
-                { value : Float
-                , index : Float
-                , date : Time.Posix
-                }
-                ChartItem.Dot
-            )
+    -> List StatementChartItem
     -> Html Msg
 viewGroupedByPayer { rows, expanded } _ =
     let
@@ -624,7 +488,7 @@ viewGroupedByPayer { rows, expanded } _ =
                     Html.div
                         [ Attrs.class "flex flex-col justify-center w-full"
                         ]
-                        ([ Html.div
+                        (Html.div
                             [ Attrs.class "flex flex-row justify-between p-2 my-1"
                             , Attrs.class "border-b rounded-t bg-stone-200"
                             , Events.onClick (GroupExpanded payer)
@@ -634,48 +498,10 @@ viewGroupedByPayer { rows, expanded } _ =
                                 [ Html.p [] [ Html.text (String.fromFloat totalSum) ]
                                 ]
                             ]
-                         ]
-                            ++ (if Just payer == expanded then
+                            :: (if Just payer == expanded then
                                     toChartData groupRows
                                         |> Dict.toList
-                                        |> List.map
-                                            (\( year, monthlyReport ) ->
-                                                Html.div [ Attrs.class "pb-4" ]
-                                                    [ Html.p [ Attrs.class "py-4" ]
-                                                        [ Html.text (String.fromInt year ++ " year") ]
-                                                    , Chart.chart
-                                                        [ ChartAttrs.height 80
-                                                        , ChartAttrs.htmlAttrs
-                                                            [ Attrs.class "w-full px-4 pb-12 pt-24 border rounded" ]
-                                                        ]
-                                                        [ Chart.binLabels
-                                                            (\( month, _ ) -> String.fromInt month)
-                                                            [ ChartAttrs.moveDown 6, ChartAttrs.fontSize 5 ]
-                                                        , Chart.yLabels
-                                                            [ ChartAttrs.withGrid
-                                                            , ChartAttrs.fontSize 0
-                                                            ]
-                                                        , Chart.bars
-                                                            []
-                                                            [ Chart.bar
-                                                                (\( month, value ) ->
-                                                                    ((value * 100)
-                                                                        |> Basics.round
-                                                                        |> Basics.toFloat
-                                                                    )
-                                                                        / 100
-                                                                )
-                                                                [ ChartAttrs.color "lightblue" ]
-                                                            ]
-                                                            (monthlyReport |> Dict.toList)
-                                                        , Chart.barLabels
-                                                            [ ChartAttrs.fontSize 5
-                                                            , ChartAttrs.moveUp 2
-                                                            , ChartAttrs.color "stone"
-                                                            ]
-                                                        ]
-                                                    ]
-                                            )
+                                        |> List.map viewYearReportChart
 
                                 else
                                     []
@@ -683,6 +509,45 @@ viewGroupedByPayer { rows, expanded } _ =
                         )
                 )
         )
+
+
+viewYearReportChart : ( Int, Dict Int Float ) -> Html msg
+viewYearReportChart ( year, monthlyReport ) =
+    Html.div [ Attrs.class "pb-4" ]
+        [ Html.p [ Attrs.class "py-4" ]
+            [ Html.text (String.fromInt year ++ " year") ]
+        , Chart.chart
+            [ ChartAttrs.height 80
+            , ChartAttrs.htmlAttrs
+                [ Attrs.class "w-full px-4 pb-12 pt-24 border rounded" ]
+            ]
+            [ Chart.binLabels
+                (\( month, _ ) -> String.fromInt month)
+                [ ChartAttrs.moveDown 6, ChartAttrs.fontSize 5 ]
+            , Chart.yLabels
+                [ ChartAttrs.withGrid
+                , ChartAttrs.fontSize 0
+                ]
+            , Chart.bars
+                []
+                [ Chart.bar
+                    (\( _, value ) ->
+                        ((value * 100)
+                            |> Basics.round
+                            |> Basics.toFloat
+                        )
+                            / 100
+                    )
+                    [ ChartAttrs.color "lightblue" ]
+                ]
+                (monthlyReport |> Dict.toList)
+            , Chart.barLabels
+                [ ChartAttrs.fontSize 5
+                , ChartAttrs.moveUp 2
+                , ChartAttrs.color "stone"
+                ]
+            ]
+        ]
 
 
 toChartData : List StatementRow -> Dict Int (Dict Int Float)
@@ -790,8 +655,8 @@ monthToInt month =
 reportaPageButtonStyle : Bool -> Html.Attribute msg
 reportaPageButtonStyle isActive =
     Attrs.class
-        (([ "p-2 mb-2 border border-stone-500 rounded" ]
-            ++ (if isActive then
+        (("p-2 mb-2 border border-stone-500 rounded"
+            :: (if isActive then
                     [ "bg-green-400" ]
 
                 else
@@ -851,7 +716,7 @@ viewUploadStatement hasHeaders =
                     , Events.onCheck FileHasHeadersChecked
                     ]
                     []
-                , Html.label [] [ Html.text "report contains headers" ]
+                , Html.label [] [ Html.text "statement contains headers" ]
                 ]
             ]
         ]
@@ -859,24 +724,14 @@ viewUploadStatement hasHeaders =
 
 viewDefineColumns : List ( Int, ColumnType, List String ) -> Dict Int String -> Bool -> Html Msg
 viewDefineColumns allStatementColumns statementHeaders hasHeaders =
-    Html.div [ Attrs.class "flex flex-col gap-2 justify-center items-center w-full" ]
-        [ Html.div [ Attrs.class "flex justify-center items-center w-full sticky top-0 py-2 mb-2 bg-stone-500" ]
-            [ Html.input
-                [ Attrs.type_ "button"
-                , Attrs.value "submit"
-                , Attrs.class "p-4 bg-green-400 text-white border-2 border-stone-500 rounded"
-                , Events.onClick ColumnsSubmitted
-                ]
-                []
-            ]
-        , Html.div [ Attrs.class "w-3/4 flex gap-8 flex-wrap justify-center" ]
+    Html.div [ Attrs.class "flex flex-col gap-2 m-2 justify-center items-center w-full" ]
+        [ Html.div [ Attrs.class "w-3/4 flex gap-8 flex-wrap justify-center" ]
             (allStatementColumns
                 |> List.map
                     (\( index, columnType, v ) ->
                         Html.div [ Attrs.class "flex flex-col w-96 gap-2 border rounded p-4" ]
                             (Html.div [ Attrs.class "flex flex-row gap-4 justify-around" ]
-                                [ viewColumnTypeSelect hasHeaders
-                                    columnType
+                                [ viewColumnTypeSelect
                                     index
                                     (Dict.get index statementHeaders
                                         |> Maybe.withDefault ""
@@ -892,42 +747,24 @@ viewDefineColumns allStatementColumns statementHeaders hasHeaders =
                             )
                     )
             )
+        , Html.div
+            [ Attrs.class "flex justify-center items-center w-full py-2 mb-2 bg-stone-500" ]
+            [ Html.input
+                [ Attrs.type_ "button"
+                , Attrs.value "confirm"
+                , Attrs.class "p-4 bg-green-400 text-white border-2 border-stone-500 rounded"
+                , Events.onClick ColumnsSubmitted
+                ]
+                []
+            ]
         ]
 
 
-viewColumnTypeSelect : Bool -> ColumnType -> Int -> String -> Html Msg
-viewColumnTypeSelect hasHeaders columnType index header =
-    Html.div [ Attrs.class "flex flex-row w-full justify-between items-center border-b my-1 pb-2" ]
-        (case columnType of
-            CommonInfo info ->
-                [ if hasHeaders then
-                    Html.label [ Attrs.class "w-2/3" ] [ Html.text header ]
-
-                  else
-                    Html.input
-                        [ Attrs.type_ "text"
-                        , Attrs.value info
-                        , Events.onInput (CommonInfoHeaderChanged index)
-                        ]
-                        []
-                , viewTypeSelect index header
-                ]
-
-            Payer ->
-                [ Html.label [ Attrs.class "w-2/3" ] [ Html.text header ]
-                , viewTypeSelect index header
-                ]
-
-            Date ->
-                [ Html.label [ Attrs.class "w-2/3" ] [ Html.text header ]
-                , viewTypeSelect index header
-                ]
-
-            Value ->
-                [ Html.label [ Attrs.class "w-2/3" ] [ Html.text header ]
-                , viewTypeSelect index header
-                ]
-        )
+viewColumnTypeSelect : Int -> String -> Html Msg
+viewColumnTypeSelect index header =
+    Html.div
+        [ Attrs.class "flex flex-row w-full justify-between items-center border-b my-1 pb-2" ]
+        [ viewTypeSelect index header ]
 
 
 viewTypeSelect : Int -> String -> Html Msg
@@ -937,8 +774,8 @@ viewTypeSelect index header =
         , Attrs.class "w-1/3 bg-stone-100 p-2 border rounded"
         ]
         [ Html.option
-            [ Attrs.value (columnTypeToString (CommonInfo header)) ]
-            [ Html.text (translateColumnType (CommonInfo header)) ]
+            [ Attrs.value (columnTypeToString CommonInfo) ]
+            [ Html.text (translateColumnType CommonInfo) ]
         , Html.option
             [ Attrs.value (columnTypeToString Payer) ]
             [ Html.text (translateColumnType Payer) ]
