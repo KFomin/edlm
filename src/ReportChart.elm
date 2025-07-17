@@ -6,7 +6,6 @@ import Chart.Item as ChartItem
 import Dict exposing (Dict)
 import Html exposing (Html)
 import Html.Attributes as Attrs
-import Report
 import Time
 
 
@@ -58,7 +57,14 @@ viewYearReportChart ( year, monthlyReport ) =
         ]
 
 
-toYearlyReports : List Report.Row -> Dict Int (Dict Int Float)
+toYearlyReports :
+    List
+        { payerOrReceiver : String
+        , dateOfPayment : Time.Posix
+        , valueOfPayment : Float
+        , allOtherInfo : List String
+        }
+    -> Dict Int (Dict Int Float)
 toYearlyReports rows =
     rows
         |> List.map
