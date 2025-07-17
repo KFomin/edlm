@@ -27,10 +27,11 @@ import Time
 
 type alias Model =
     { report : Report
+    , requiredColumnsDefined : Bool
     , reportColumns :
         List
             ( Int
-            , ColumnType
+            , Maybe ColumnType
             , List String
             )
     , reportHasHeaders : Bool
@@ -46,10 +47,9 @@ type Report
 
 
 type ColumnType
-    = CommonInfo
-    | Payer
-    | Date
-    | Value
+    = PaymentRecipient
+    | PaymentDate
+    | PaymentAmount
 
 
 type alias Row =
@@ -60,55 +60,33 @@ type alias Row =
     }
 
 
-translateColumnType : ColumnType -> String
-translateColumnType columnType =
-    case columnType of
-        CommonInfo ->
-            "common info"
-
-        Payer ->
-            "payment receiver"
-
-        Date ->
-            "date of payment"
-
-        Value ->
-            "money paid"
-
-
 columnTypeToString : ColumnType -> String
 columnTypeToString columnType =
     case columnType of
-        CommonInfo ->
-            "commoninfo"
+        PaymentRecipient ->
+            "payment recipient"
 
-        Payer ->
-            "payment receiver"
-
-        Date ->
+        PaymentDate ->
             "date of payment"
 
-        Value ->
-            "money paid"
+        PaymentAmount ->
+            "payment amount"
 
 
-columnTypeFromString : String -> ColumnType
+columnTypeFromString : String -> Maybe ColumnType
 columnTypeFromString columnType =
     case columnType of
-        "commoninfo" ->
-            CommonInfo
-
-        "payment receiver" ->
-            Payer
+        "payment recipient" ->
+            Just PaymentRecipient
 
         "date of payment" ->
-            Date
+            Just PaymentDate
 
-        "money paid" ->
-            Value
+        "payment amount" ->
+            Just PaymentAmount
 
         _ ->
-            CommonInfo
+            Nothing
 
 
 type Msg
@@ -117,7 +95,7 @@ type Msg
     | FileSelected File
     | FileLoaded String
     | ColumnsSubmitted
-    | ColumnTypeSelected Int ColumnType
+    | ColumnTypeSelected Int (Maybe ColumnType)
     | GroupExpanded String
 
 
@@ -169,6 +147,15 @@ update msg model =
                                     , cells
                                     )
 
+                                else if
+                                    (columnType == selectedColumnType)
+                                        && (columnIndex /= selectedColumnIndex)
+                                then
+                                    ( columnIndex
+                                    , Nothing
+                                    , cells
+                                    )
+
                                 else
                                     ( columnIndex
                                     , columnType
@@ -178,6 +165,16 @@ update msg model =
               }
             , Cmd.none
             )
+                |> Tuple.mapFirst
+                    (\model_ ->
+                        { model_
+                            | requiredColumnsDefined =
+                                List.map (\( _, columnType, _ ) -> columnType) model_.reportColumns
+                                    |> List.filterMap identity
+                                    |> List.length
+                                    |> (==) 3
+                        }
+                    )
 
         GroupExpanded string ->
             ( { model
@@ -206,7 +203,7 @@ normalizeStringCell cell =
             cell
 
 
-parse : String -> Bool -> List ( Int, ColumnType, List String )
+parse : String -> Bool -> List ( Int, Maybe ColumnType, List String )
 parse stringReport fileHasHeaders =
     let
         rawRows : List String
@@ -252,12 +249,12 @@ parse stringReport fileHasHeaders =
             )
             Dict.empty
         |> Dict.toList
-        |> List.map (\( index, v ) -> ( index, CommonInfo, v ))
+        |> List.map (\( index, v ) -> ( index, Nothing, v ))
         |> List.filter (\( _, _, cells ) -> List.all (String.isEmpty >> not) cells)
 
 
 toData :
-    List ( Int, ColumnType, List String )
+    List ( Int, Maybe ColumnType, List String )
     ->
         { payers : Dict Int String
         , values : Dict Int Float
@@ -275,21 +272,7 @@ toData =
                 |> List.foldr
                     (\( index, cell ) data ->
                         case columnType of
-                            CommonInfo ->
-                                { data
-                                    | commonInfo =
-                                        Dict.insert index
-                                            (case Dict.get index data.commonInfo of
-                                                Just commonInfos ->
-                                                    cell :: commonInfos
-
-                                                Nothing ->
-                                                    [ cell ]
-                                            )
-                                            data.commonInfo
-                                }
-
-                            Payer ->
+                            Just PaymentRecipient ->
                                 { data
                                     | payers =
                                         if String.isEmpty cell then
@@ -301,7 +284,7 @@ toData =
                                                 data.payers
                                 }
 
-                            Date ->
+                            Just PaymentDate ->
                                 { data
                                     | dates =
                                         (Iso8601.toTime
@@ -312,15 +295,15 @@ toData =
                                             |> Result.toMaybe
                                         )
                                             |> Maybe.map
-                                                (\bitcherzz ->
+                                                (\dates ->
                                                     Dict.insert index
-                                                        bitcherzz
+                                                        dates
                                                         data.dates
                                                 )
                                             |> Maybe.withDefault data.dates
                                 }
 
-                            Value ->
+                            Just PaymentAmount ->
                                 { data
                                     | values =
                                         String.replace "," "." cell
@@ -333,6 +316,9 @@ toData =
                                                 )
                                             |> Maybe.withDefault data.values
                                 }
+
+                            Nothing ->
+                                data
                     )
                     acc
         )
@@ -344,7 +330,7 @@ toData =
 
 
 fromColumns :
-    List ( Int, ColumnType, List String )
+    List ( Int, Maybe ColumnType, List String )
     -> Dict Int Row
 fromColumns columns =
     toData columns
@@ -382,7 +368,20 @@ view model =
             Html.div [] [ Html.text "loading" ]
 
         DefiningColumns ->
-            viewDefineColumns model.reportColumns
+            Html.div [ Attrs.class "w-full" ]
+                [ viewDefineColumns model.reportColumns
+                , Html.div
+                    [ Attrs.class "flex justify-center items-center w-full py-2 mb-2" ]
+                    [ Html.input
+                        [ Attrs.type_ "button"
+                        , Attrs.value "confirm"
+                        , Attrs.disabled (not model.requiredColumnsDefined)
+                        , Attrs.class "p-4 bg-green-400 text-white border-2 border-stone-500 rounded"
+                        , Events.onClick ColumnsSubmitted
+                        ]
+                        []
+                    ]
+                ]
 
         Ready readyReport ->
             Html.div
@@ -486,16 +485,25 @@ viewUploadStatement hasHeaders =
         ]
 
 
-viewDefineColumns : List ( Int, ColumnType, List String ) -> Html Msg
+viewDefineColumns : List ( Int, Maybe ColumnType, List String ) -> Html Msg
 viewDefineColumns allStatementColumns =
     Html.div [ Attrs.class "flex flex-col gap-2 m-2 justify-center items-center w-full" ]
         [ Html.div [ Attrs.class "w-3/4 flex gap-8 flex-wrap justify-center" ]
             (allStatementColumns
                 |> List.map
-                    (\( index, _, v ) ->
-                        Html.div [ Attrs.class "flex flex-col w-82 gap-2 border rounded p-4" ]
+                    (\( index, columnTypeSelected, v ) ->
+                        Html.div
+                            [ Attrs.class
+                                ([ "flex flex-col w-82 gap-2 border rounded p-4"
+                                 , columnTypeSelected
+                                    |> Maybe.map (\_ -> "bg-green-100")
+                                    |> Maybe.withDefault ""
+                                 ]
+                                    |> String.join " "
+                                )
+                            ]
                             (Html.div [ Attrs.class "flex flex-row gap-4 justify-around" ]
-                                [ viewColumnTypeSelect index ColumnTypeSelected ]
+                                [ viewColumnTypeSelect index columnTypeSelected ColumnTypeSelected ]
                                 :: (List.take 4 v
                                         |> List.map
                                             (\cell ->
@@ -506,42 +514,40 @@ viewDefineColumns allStatementColumns =
                             )
                     )
             )
-        , Html.div
-            [ Attrs.class "flex justify-center items-center w-full py-2 mb-2" ]
-            [ Html.input
-                [ Attrs.type_ "button"
-                , Attrs.value "confirm"
-                , Attrs.class "p-4 bg-green-400 text-white border-2 border-stone-500 rounded"
-                , Events.onClick ColumnsSubmitted
-                ]
-                []
-            ]
         ]
 
 
-viewColumnTypeSelect : Int -> (Int -> ColumnType -> msg) -> Html msg
-viewColumnTypeSelect index toSelectedMsg =
+viewColumnTypeSelect : Int -> Maybe ColumnType -> (Int -> Maybe ColumnType -> msg) -> Html msg
+viewColumnTypeSelect index columnTypeSelected toSelectedMsg =
     Html.div
         [ Attrs.class "flex flex-col w-full justify-between items-center border-b my-1 pb-2" ]
-        [ viewTypeSelect index toSelectedMsg ]
+        [ viewTypeSelect index columnTypeSelected toSelectedMsg ]
 
 
-viewTypeSelect : Int -> (Int -> ColumnType -> msg) -> Html msg
-viewTypeSelect index toSelectedMsg =
+viewTypeSelect : Int -> Maybe ColumnType -> (Int -> Maybe ColumnType -> msg) -> Html msg
+viewTypeSelect index columnTypeSelected toSelectedMsg =
     Html.select
-        [ Events.onInput (\columnTypeString -> toSelectedMsg index (columnTypeFromString columnTypeString))
-        , Attrs.class "w-2/3 bg-stone-100 p-2 border rounded items-center text-center"
+        [ Events.onInput
+            (\columnTypeString ->
+                toSelectedMsg index
+                    (columnTypeFromString columnTypeString)
+            )
+        , Attrs.class
+            (columnTypeSelected
+                |> Maybe.map (\_ -> "")
+                |> Maybe.withDefault "text-stone-500"
+            )
+        , Attrs.class "w-2/3 bg-stone-50 p-2 border rounded items-center text-center"
         ]
-        [ Html.option
-            [ Attrs.value (columnTypeToString CommonInfo) ]
-            [ Html.text (translateColumnType CommonInfo) ]
+        [ Html.option [ Attrs.selected (columnTypeSelected == Nothing) ]
+            [ Html.text "select column type" ]
         , Html.option
-            [ Attrs.value (columnTypeToString Payer) ]
-            [ Html.text (translateColumnType Payer) ]
+            [ Attrs.value (columnTypeToString PaymentRecipient), Attrs.selected (columnTypeSelected == Just PaymentRecipient) ]
+            [ Html.text (columnTypeToString PaymentRecipient) ]
         , Html.option
-            [ Attrs.value (columnTypeToString Date) ]
-            [ Html.text (translateColumnType Date) ]
+            [ Attrs.value (columnTypeToString PaymentDate), Attrs.selected (columnTypeSelected == Just PaymentDate) ]
+            [ Html.text (columnTypeToString PaymentDate) ]
         , Html.option
-            [ Attrs.value (columnTypeToString Value) ]
-            [ Html.text (translateColumnType Value) ]
+            [ Attrs.value (columnTypeToString PaymentAmount), Attrs.selected (columnTypeSelected == Just PaymentAmount) ]
+            [ Html.text (columnTypeToString PaymentAmount) ]
         ]

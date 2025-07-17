@@ -24,6 +24,7 @@ init : {} -> ( Model, Cmd msg )
 init _ =
     ( { reportModel =
             { report = Report.NotAsked
+            , requiredColumnsDefined = False
             , reportHasHeaders = False
             , reportColumns = []
             , expanded = Nothing
