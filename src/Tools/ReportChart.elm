@@ -1,4 +1,4 @@
-module ReportChart exposing (ChartItem, toYearlyReports, viewYearReportChart)
+module Tools.ReportChart exposing (ChartItem, toYearlyReports, viewYearReportChart)
 
 import Chart
 import Chart.Attributes as ChartAttrs

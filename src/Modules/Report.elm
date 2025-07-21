@@ -1,4 +1,4 @@
-module Report exposing
+module Modules.Report exposing
     ( ColumnType(..)
     , Model
     , Msg
@@ -20,9 +20,9 @@ import Html.Attributes as Attrs
 import Html.Events as Events
 import Iso8601
 import Json.Decode as Decode
-import ReportChart
 import Task
 import Time
+import Tools.ReportChart as ReportChart
 
 
 type alias Model =

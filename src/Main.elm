@@ -2,7 +2,7 @@ module Main exposing (..)
 
 import Browser
 import Html exposing (Html)
-import Report
+import Modules.Report as Report
 
 
 main : Program {} Model Msg
